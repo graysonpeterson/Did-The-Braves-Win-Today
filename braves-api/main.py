@@ -1,0 +1,81 @@
+from fastapi import FastAPI
+import httpx
+from datetime import date
+
+app = FastAPI()
+
+BRAVES_TEAM_ID = 144
+MLB_API_BASE = "https://statsapi.mlb.com/api/v1"
+
+async def get_todays_game():
+    today = date.today().isoformat()
+    url = f"{MLB_API_BASE}/schedule?teamId={BRAVES_TEAM_ID}&date={today}&sportId=1"
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url)
+        data = response.json()
+
+    if data["totalGames"] == 0:
+        return None
+    
+    return data["dates"][0]["games"][0]
+
+
+def parse_game(game):
+    status = game["status"]["abstractGameState"] # "Preview", "Live", "Final"
+    home = game["teams"]["home"]
+    away = game["teams"]["away"]
+
+    braves_are_home = home["team"]["id"] == BRAVES_TEAM_ID
+
+    braves = home if braves_are_home else away
+    opponent = away if braves_are_home else home
+
+    braves_score = braves.get("score", 0)
+    opponent_score = opponent.get("score",0)
+    opponent_name = opponent["team"]["name"]
+
+    return {
+        "status": status,
+        "braves_score": braves_score,
+        "opponent_score": opponent_score,
+        "opponent": opponent_name,
+        "braves_are_home": braves_are_home,
+    }
+
+
+@app.get("/")
+def root():
+    return {"message": "Braves API is running! Success!"}
+
+@app.get("/today")
+async def today():
+    game = await get_todays_game()
+
+    if game is None:
+        return {"display": "No Braves game today.", "result": "no_game"}
+    
+    parsed = parse_game(game)
+
+    if parsed["status"] != "Final":
+        return {
+            "display": f"Game not final yet. Status: {parsed['status']}",
+            "result": "in_progress",
+            "opponent": parsed["opponent"],
+        }
+    
+    braves_won = parsed["braves_score"] > parsed["opponent_score"]
+    result = "win" if braves_won else "loss"
+    display = (
+        f"Braves win! {parsed['braves_score']}-{parsed['opponent_score']} over the {parsed['opponent']}."
+        if braves_won
+        else f"Braves lost. {parsed['braves_score']}-{parsed['opponent_score']} to the {parsed['opponent']}."
+    )
+
+    return {
+        "result": result,
+        "display": display,
+        "braves_score": parsed["braves_score"],
+        "opponent_score": parsed["opponent_score"],
+        "opponent": parsed["opponent"],
+    }
