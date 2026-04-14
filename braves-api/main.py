@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 import httpx
-from datetime import date
+from datetime import date, timedelta
 
 app = FastAPI()
 
@@ -20,6 +20,23 @@ async def get_todays_game():
     
     return data["dates"][0]["games"][0]
 
+async def get_last10_games():
+    today_as_day = date.today().day
+    last10_list = []
+    for i in range(1,11):
+        formatted_date = date.today() - timedelta(days=i)
+        url = f"{MLB_API_BASE}/schedule?teamId={BRAVES_TEAM_ID}&date={formatted_date}&sportId=1"
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url)
+            data = response.json()
+        
+        if data["totalGames"] == 0:
+            last10_list.append("IDLE")
+        else:
+            last10_list.append(data["dates"][0]["games"][0])
+    return last10_list
+        
 
 def parse_game(game):
     status = game["status"]["abstractGameState"] # "Preview", "Live", "Final"
@@ -79,3 +96,31 @@ async def today():
         "opponent_score": parsed["opponent_score"],
         "opponent": parsed["opponent"],
     }
+
+@app.get("/last10")
+async def last10():
+    game_list = await get_last10_games()
+
+    cleaned_last10_list = []
+    for i in range(10):
+        if game_list[i] == "IDLE":
+            cleaned_last10_list.append({"display": "No Braves game today.", "result": "no_game"})
+        else:
+            parsed = parse_game(game_list[i])
+            
+            braves_won = parsed["braves_score"] > parsed["opponent_score"]
+            result = "win" if braves_won else "loss"
+            display = (
+                f"W - {parsed['braves_score']}-{parsed['opponent_score']} over the {parsed['opponent']}."
+                if braves_won
+                else f"L - {parsed['braves_score']}-{parsed['opponent_score']} to the {parsed['opponent']}."
+            )
+
+            cleaned_last10_list.append({
+            "result": result,
+            "display": display,
+            "braves_score": parsed["braves_score"],
+            "opponent_score": parsed["opponent_score"],
+            "opponent": parsed["opponent"],
+            })
+    return cleaned_last10_list
