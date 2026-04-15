@@ -36,7 +36,29 @@ async def get_last10_games():
         else:
             last10_list.append(data["dates"][0]["games"][0])
     return last10_list
+
+# return the next game whose status is Preview.
+async def get_next_game():
+    today_as_day = date.today().day
+    i = 0
+    while i <= 7:
+        formatted_date = date.today() + timedelta(days=i)
+        url = f"{MLB_API_BASE}/schedule?teamId={BRAVES_TEAM_ID}&date={formatted_date}&sportId=1"
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url)
+            data = response.json()
         
+        if data["totalGames"] == 0 and i == 7:
+            return "No games in 7 days"
+        if data["totalGames"] == 0:
+            i+=1
+            continue
+        if data["dates"][0]["games"][0]["status"]["abstractGameState"] == "Preview":
+            return data["dates"][0]["games"][0]
+        i+=1
+    return None
+
 
 def parse_game(game):
     status = game["status"]["abstractGameState"] # "Preview", "Live", "Final"
@@ -64,6 +86,7 @@ def parse_game(game):
 @app.get("/")
 def root():
     return {"message": "Braves API is running! Success!"}
+
 
 @app.get("/today")
 async def today():
@@ -97,6 +120,7 @@ async def today():
         "opponent": parsed["opponent"],
     }
 
+
 @app.get("/last10")
 async def last10():
     game_list = await get_last10_games()
@@ -124,3 +148,17 @@ async def last10():
             "opponent": parsed["opponent"],
             })
     return cleaned_last10_list
+
+
+@app.get("/next")
+async def next():
+    game = await get_next_game()
+
+    if game is None:
+        return {"display": "No Braves game in next 7 days", "result": "no_game"}
+    
+    parsed = parse_game(game)
+
+    return {
+        "opponent": f"Braves will face {parsed['opponent']} next.",
+    }
